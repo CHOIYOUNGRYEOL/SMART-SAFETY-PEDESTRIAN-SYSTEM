@@ -12,6 +12,7 @@ import os
 import datetime
 import pytz
 
+
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
@@ -30,7 +31,6 @@ now = datetime.datetime.now(tz)
 today = now.date()
 now_time = now.strftime("%h-%m-%d")
 past_minute = int(now.strftime('%S'))  # 과거 시간 저장
-
 
 @smart_inference_mode()
 def run(
@@ -62,8 +62,8 @@ def run(
 
 ):
     client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # TCP Socket
-    Host = '192.168.45.28'  # 통신할 대상의 IP 주소
-    Port = 7999  # 통신할 대상의 Port 주소
+    Host = '192.168.45.36'  # 통신할 대상의 IP 주소
+    Port = 9999  # 통신할 대상의 Port 주소
     client_sock.connect((Host, Port))  # 서버로 연결시도
     print('Connecting to ', Host, Port)
 
@@ -117,6 +117,7 @@ def run(
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             annotator = Annotator(im0, line_width=line_thickness, example=str(names))
             im0 = annotator.result()
+
             if len(det):
                 for c in det[:, 5].unique():
                     n = (det[:, 5] == c).sum()  # detections per class
@@ -124,15 +125,15 @@ def run(
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
                     if save_txt:  # Write to file
-                        count = int(n)
+                        c = int(cls)  # integer class
+                        label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
+                        annotator.box_label(xyxy, label, color=colors(c, True))
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        Condition(client_sock, xywh, xyxy, gn, cls, count)
+                        Condition(client_sock, xywh, xyxy, gn, cls)
                         save_one_box([0, 0, 1280, 640], im0, file='runs/detect/img/img1.jpg', BGR=True)
-                        thread2 = threading.Thread(target=Recv, args=(client_sock,))
-                        thread2.start()
-                        if (int(cls) == 0):
-                            info = {'id': 3, 'label': int(cls), 'timee': now_time}
-                            # insert_data_to_db(info)
+                        thread1 = threading.Thread(target=Recv, args=(client_sock,))
+                        thread1.start()
+
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
@@ -150,8 +151,7 @@ def run(
         # Print time (inference-only)
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
-
-def Condition(client_sock, xywh, xyxy, gn, cls, count):
+def Condition(client_sock, xywh, xyxy, gn, cls):
     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
     global past_minute
     timezone = 'Asia/Seoul'
@@ -159,24 +159,20 @@ def Condition(client_sock, xywh, xyxy, gn, cls, count):
     now = datetime.datetime.now(tz)
     now_time = now.strftime('%H:%M:%S')  # 현재시간 시:분:초
     now_minute = int(now.strftime('%S'))  # 현재시간 초
-    time_diff: int = now_minute - past_minute  # 과거와 현재 시간 차
-    width = int((xywh[2] * 50))  # boundingbox width calculation
-    height = int((xywh[3] * 50))  # boundingbox height calculation
-    area = width * height  # boundingbox area calculation
-    print('boundingbox_area:', area)
+    time_diff = now_minute - past_minute  # 과거와 현재 시간 차
+    width = int((xywh[2] * 50))  # 바운딩 박스 너비
+    height = int((xywh[3] * 50))  # 바운딩박스 높이
+    area = width * height  # 바운딩박스 넓이
     label = int(cls)  # 레이블값
-    if time_diff < 0:
-        time_diff += 60
-    print('timer:', time_diff)
-
+    print(area)
     try:
-        if (((time_diff > 10) and (label == 0) and (area > 10)) or (
-                (time_diff > 5) and (label == 0) and (area > 10) and (count >= 2))):
-            json_object = {"id": 3, "label": int(cls), "timee": now_time}
-            send_data = json.dumps(json_object)
-            client_sock.send(send_data.encode())  # 서버로 메시지 전송
-            print('Send to ' + ':', send_data)
-            past_minute = int(now.strftime('%S'))  # 마지막 메시지 도착 시간 갱신
+        if label == 2:
+            if area > 10:
+                json_object = {"id": 4, "label": int(cls), "timee": now_time, "area": area}
+                send_data = json.dumps(json_object)
+                client_sock.sendall(send_data.encode())  # 서버로 메시지 전송
+                print('Send to ' + ':', send_data)
+                past_minute = int(now.strftime('%S'))  # 마지막 메시지 도착 시간 갱신
 
     except Exception as e:
         print(f'Error sending message: {e}')
@@ -189,7 +185,6 @@ def Recv(client_sock):
             data_re = client_sock.recv(1024)
             if not data_re:
                 break
-
             # decode json data
             json_data = json.loads(data_re.decode())
 
@@ -211,11 +206,9 @@ def parse_opt():
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     return opt
 
-
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
     run(**vars(opt))
-
 
 if __name__ == "__main__":
     opt = parse_opt()
