@@ -21,7 +21,7 @@ pi.set_servo_pulsewidth(servo_pin, min_pulse)
 pi.set_PWM_dutycycle(red_pin, 0)
 pi.set_PWM_dutycycle(yellow_pin, 0)
 pi.set_PWM_dutycycle(green_pin, 255)
-time.sleep(5)
+time.sleep(6)
 
 
 def motor_on():
